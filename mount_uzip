@@ -1,0 +1,100 @@
+#!/usr/local/bin/zsh
+
+#
+# LANG=ja_JP.UTF-8
+# PACKAGE=mount_uzip
+# LICENSE='public domain'
+# AUTHOR=dearblue
+# STATUS='terminated with throw'
+# ISSUE_REPORT_TO=/dev/null
+#
+#
+# FreeBSD 上で uzip や ulzma なパッケージを mdconfig を通して
+# マウントさせる時に、楽ができるツール。
+#
+#   # mount_uzip [-t fstype] [-o mount-options]... uzip mountpoint
+#
+# オプションには mount で渡せるものが全て渡せる。
+#
+#
+# /etc/fstab にうまい具合に記述すれば、automountd とともに
+# 扱うことでさらに快適になるかもしれない。
+#
+# makefs で UFS にまとめたファイルを mkuzip で固めた
+# freebsd-src-10.2.uzip ファイルの場合:
+#
+#   /usr/home/ゴノレゴ13/uzip/freebsd-src-10.2.uzip /usr/src dummyfs ro,noauto,noexec,mountprog=/usr/local/bin/mount_uzip 0 0
+#                                                            ^^^^^^^                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#                                                          なんでもいい               mount_uzip をフルパスで指定する
+#
+# makefs や mkisofs で iso にまとめたファイルを mkulzma で
+# 固めた freebsd-src-10.2.iso.ulzma ファイルの場合:
+#
+#   /usr/home/ゴノレゴ13/uzip/freebsd-src-10.2.iso.ulzma /usr/src dummyfs ro,noauto,noexec,-t=cd9660,mountprog=/usr/local/bin/mount_uzip 0 0
+#                                                                                          ^^^^^^^^^
+#                                                                                          ここがミソ
+#
+
+if [ $# -lt 2 ]
+then
+	echo "Usage: $0 [mount option]... uzip_or_ulzma mountpoint" 1>&2
+	exit 1
+fi
+
+
+uzip=$(eval echo \${$(($# - 1))})
+mountpoint=$(eval echo \${$#})
+exttype=${uzip##*.}
+
+case $exttype in
+uzip )
+	exttype=".uzip"
+	;;
+ulzma )
+	exttype=".uncompress"
+	;;
+* )
+	exttype=".uzip"
+	;;
+esac
+
+if [ ! -f $uzip ]
+then
+	echo "$0: file not exist - $uzip" 1>&2
+	exit 2
+fi
+
+
+# check attached on mdconfig
+unit=`mdconfig -lv | grep $uzip | awk '{print $1}'`
+if [ "$unit" = "" ]
+then
+	unit=$(($(od -vAn -N4 -tu4 < /dev/random) % 10000 + 50000))
+	mdconfig -o readonly -u$unit $uzip || (echo "$0: failed mdconfig. stoped."; exit 3)
+	unit=md$unit
+fi
+
+
+# FIXME: Change to /bin/sh from only zsh, bash or etc..
+set -- "${@:1:($# - 2)}" -r "/dev/$unit$exttype" "${@:$#}"
+
+# try mount
+mount "$@" || exit 4
+
+
+#### 以下は /bin/sh で実装したらこうなったという残骸
+#
+# cmd=""
+# n=$(($# - 2))
+# if [ $n -gt 0 ]
+# then
+# 	for i in `seq $n`
+# 	do
+# 		c=$(eval echo \${$i})
+# 		cmd="$cmd \"$c\"" # FIXME: エスケープするべきところがされないため、要修正
+# 	done
+# fi
+# 
+# cmd="$cmd \"$unit\" \"$mountpoint\"" # FIXME: エスケープするべきところがされないため、要修正
+#
+# mount $cmd
